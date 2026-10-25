@@ -7,7 +7,7 @@ import { planSchema } from "./generatePlan.js";
 let client;
 
 export async function geminiAskAI(prompt) {
-  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set (put it in .env).");
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set (locally: put it in .env; on Vercel: add it under Settings > Environment Variables).");
   client ??= new GoogleGenAI({});
   const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
