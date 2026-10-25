@@ -186,11 +186,49 @@ near("plan3 total cost", r3.cost.total, 41.35, 0.001);
 // (The repeat flags also fire here because the fake meals are identical; we only look at day-calories.)
 const custom = [{ id: "x", name: "Test food", packGrams: 100, price: 1, pricing: "pack", per100g: { kcal: 100, protein: 0, carbs: 0, fat: 0 } }];
 const tenDay = (grams) => week(Array.from({ length: 5 }, (_, i) => [meal(`A${i}`, ["x", grams]), meal(`B${i}`, ["x", 500])]));
-const dayFlagged = (grams) => checkPlan(tenDay(grams), { kcal: 1000 }, 9999, custom).problems.some((p) => p.type === "day-calories");
+const dayFlagged = (grams, goal) => checkPlan(tenDay(grams), { kcal: 1000 }, 9999, custom, goal ? { goal } : {}).problems.some((p) => p.type === "day-calories");
 eq("edge: day exactly 10% over is allowed", dayFlagged(600), false);
 eq("edge: day 11% over is flagged", dayFlagged(610), true);
 eq("edge: day exactly 10% under is allowed", dayFlagged(400), false);
 eq("edge: day 11% under is flagged", dayFlagged(390), true);
+
+// ---- Goal-dependent calorie rule (target 1000 kcal, day = lunch grams + 500) ----
+//   lose / maintain: more than 10% either way is flagged (the default with no goal is "maintain").
+//   gain: more than 10% UNDER is flagged; OVER is flagged only above +50% (1500 kcal).
+for (const goal of ["lose", "maintain"]) {
+  eq(`${goal}: 1350 (+35%) is flagged`, dayFlagged(850, goal), true);
+  eq(`${goal}: 1100 (+10%) is allowed`, dayFlagged(600, goal), false);
+  eq(`${goal}: 890 (-11%) is flagged`, dayFlagged(390, goal), true);
+}
+eq("gain: 1350 (+35%) is allowed", dayFlagged(850, "gain"), false);
+eq("gain: 1500 (exactly +50%) is allowed", dayFlagged(1000, "gain"), false);
+eq("gain: 1510 (+51%) is flagged", dayFlagged(1010, "gain"), true);
+eq("gain: 900 (exactly -10%) is allowed", dayFlagged(400, "gain"), false);
+eq("gain: 890 (-11%) is flagged", dayFlagged(390, "gain"), true);
+eq("bad goal rejected", checkPlan(plan1, TARGET, 65, undefined, { goal: "bulk" }).ok, false);
+
+// Same real plan (plan1, hand-checked above), different targets. Plan 1 days: 1775.4, 1748.0, 1719.4, 1691.0, 1749.8 kcal.
+//  Target 1300: every day is over by 30.1% to 36.6% (1691/1300 = 1.3008 ... 1775.4/1300 = 1.3657), i.e. about 35% over.
+//     gain -> passes (over is fine below +50%).   maintain / lose / no goal -> all 5 days flagged as over.
+const g35 = checkPlan(plan1, { kcal: 1300 }, 65, undefined, { goal: "gain" });
+eq("gain plan ~35% over passes", g35.passes, true);
+eq("gain plan ~35% over has no problems", g35.problems.length, 0);
+near("gain Mon diffPct is +36.6", g35.days[0].diffPct, 36.6, 0.05);
+for (const opts of [{ goal: "maintain" }, { goal: "lose" }, {}]) {
+  const r = checkPlan(plan1, { kcal: 1300 }, 65, undefined, opts);
+  eq(`${opts.goal || "default"} plan ~35% over fails`, r.passes, false);
+  eq(`${opts.goal || "default"} plan ~35% over: 5 day problems`, r.problems.filter((p) => p.type === "day-calories" && p.direction === "over").length, 5);
+}
+//  Target 1900: Thu is 1691/1900 = -11.0% (flagged); the other days are -6.6%, -8.0%, -9.5%, -7.9% (fine). Same for every goal.
+for (const goal of ["gain", "maintain"]) {
+  const r = checkPlan(plan1, { kcal: 1900 }, 65, undefined, { goal });
+  eq(`${goal} target 1900: only Thu flagged`, r.problems.map((p) => `${p.day}:${p.direction}`).join(), "Thu:under");
+}
+//  Target 1100: days are +53.7% to +61.4% over, beyond the +50% sanity limit, so gain flags all 5 as over.
+const g50 = checkPlan(plan1, { kcal: 1100 }, 65, undefined, { goal: "gain" });
+eq("gain target 1100: 5 days over the sanity limit", g50.problems.filter((p) => p.direction === "over").length, 5);
+eq("gain over message names the sanity limit", g50.problems[0].message.includes("sanity limit is 50% above"), true);
+eq("gain under message says gain plan", checkPlan(plan1, { kcal: 1900 }, 65, undefined, { goal: "gain" }).problems[0].message.includes("a gain plan may be at most 10% below"), true);
 
 // Repeats: same name in different case counts as the same meal; same ingredients and grams under a new name also counts.
 const sneaky = week([

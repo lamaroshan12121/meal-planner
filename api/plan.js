@@ -20,7 +20,7 @@ export function createHandler(askAI) {
     const targets = calculateTargets(profile);
     if (!targets.ok) return res.status(400).json({ error: "Invalid profile", details: targets.errors });
 
-    const result = await generatePlan({ targets: targets.lunchDinner, budget, askAI });
+    const result = await generatePlan({ targets: targets.lunchDinner, budget, goal: profile.goal, askAI });
     if (!result.ok) {
       console.error(result.error);
       return res.status(502).json({ error: "Could not generate a plan. Try again in a minute.", details: result.error, attempts: result.attempts });

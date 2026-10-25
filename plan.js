@@ -8,7 +8,15 @@ import { ingredients as defaultIngredients } from "./ingredients.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const SLOTS = ["lunch", "dinner"];
-const KCAL_TOLERANCE = 0.1; // a day may be up to 10% away from the lunch-and-dinner target
+// How far a day's lunch+dinner calories may be from the target, as a fraction of the target. Depends on the goal:
+//   lose / maintain: up to 10% either way.
+//   gain: up to 10% under, but going over is fine (it only helps a surplus) until a 50% sanity limit.
+export const GOALS = ["lose", "maintain", "gain"];
+export const KCAL_LIMITS = {
+  lose: { under: 0.1, over: 0.1 },
+  maintain: { under: 0.1, over: 0.1 },
+  gain: { under: 0.1, over: 0.5 },
+};
 const MAX_REPEATS = 2;      // the same meal may appear at most twice
 
 const round1 = (n) => Math.round(n * 10) / 10;
@@ -19,8 +27,9 @@ const addInto = (a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; };
 const roundTotals = (t) => ({ kcal: Math.round(t.kcal), protein: round1(t.protein), carbs: round1(t.carbs), fat: round1(t.fat) });
 const normaliseName = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
-function validateShape(plan, dailyTargets, weeklyBudget) {
+function validateShape(plan, dailyTargets, weeklyBudget, goal) {
   const errors = [];
+  if (!GOALS.includes(goal)) errors.push('Goal must be "lose", "maintain" or "gain".');
   if (!dailyTargets || !(dailyTargets.kcal > 0)) errors.push("Daily lunch-and-dinner target needs a positive kcal.");
   if (!(typeof weeklyBudget === "number" && weeklyBudget > 0)) errors.push("Weekly budget must be a positive number.");
   if (!plan || !Array.isArray(plan.days) || plan.days.length !== 5) {
@@ -41,9 +50,12 @@ function validateShape(plan, dailyTargets, weeklyBudget) {
 
 // dailyTargets: the `lunchDinner` object from calculateTargets (needs .kcal)
 // Returns { ok: false, errors } if the plan is not even shaped right, otherwise { ok: true, ... , problems }.
-export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = defaultIngredients) {
-  const errors = validateShape(plan, dailyTargets, weeklyBudget);
+// options.goal: "lose" | "maintain" | "gain" (default "maintain"); it sets how far a day may be from the calorie target.
+export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = defaultIngredients, options = {}) {
+  const goal = options.goal ?? "maintain";
+  const errors = validateShape(plan, dailyTargets, weeklyBudget, goal);
   if (errors.length) return { ok: false, errors };
+  const limits = KCAL_LIMITS[goal];
 
   const byId = new Map(ingredientList.map((i) => [i.id, i]));
   const problems = [];
@@ -93,9 +105,15 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
     addInto(weekTotals, dayTotals);
     const diffPct = ((dayTotals.kcal - dailyTargets.kcal) / dailyTargets.kcal) * 100;
     days.push({ day: dayName, totals: roundTotals(dayTotals), targetKcal: dailyTargets.kcal, diffPct: round1(diffPct) });
-    if (Math.abs(dayTotals.kcal - dailyTargets.kcal) / dailyTargets.kcal > KCAL_TOLERANCE) {
-      problems.push({ type: "day-calories", day: dayName, kcal: Math.round(dayTotals.kcal), diffPct: round1(diffPct),
-        message: `${dayName} is ${Math.round(dayTotals.kcal)} kcal, ${Math.abs(round1(diffPct))}% ${diffPct < 0 ? "below" : "above"} the ${dailyTargets.kcal} kcal target (limit 10%).` });
+    const under = (dailyTargets.kcal - dayTotals.kcal) / dailyTargets.kcal > limits.under;
+    const over = (dayTotals.kcal - dailyTargets.kcal) / dailyTargets.kcal > limits.over;
+    if (under || over) {
+      const direction = under ? "under" : "over";
+      const limitText = goal === "gain"
+        ? (under ? "a gain plan may be at most 10% below" : "sanity limit is 50% above")
+        : "limit 10%";
+      problems.push({ type: "day-calories", day: dayName, kcal: Math.round(dayTotals.kcal), diffPct: round1(diffPct), direction,
+        message: `${dayName} is ${Math.round(dayTotals.kcal)} kcal, ${Math.abs(round1(diffPct))}% ${under ? "below" : "above"} the ${dailyTargets.kcal} kcal target (${limitText}).` });
     }
   });
 

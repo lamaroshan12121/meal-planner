@@ -1,18 +1,19 @@
 // Run: node try-plan.js            -> ONE real Gemini call (uses a little of your free quota)
 //      node try-plan.js --retries  -> the full loop: up to 3 calls (1 + 2 retries)
-// Uses the lunch-and-dinner target 1,767 kcal / 67 g protein and a $65 budget. Needs GEMINI_API_KEY in .env.
+// Uses the lunch-and-dinner target 1,767 kcal / 67 g protein, goal "gain" and a $65 budget. Needs GEMINI_API_KEY in .env.
 import { generatePlan } from "./generatePlan.js";
 import { geminiAskAI } from "./gemini.js";
 
 const targets = { kcal: 1767, protein: 67, carbs: 265, fat: 49 };
 const budget = 65;
+const goal = "gain"; // the example person is gaining; a gain plan may go over the calorie target (see plan.js)
 const maxRetries = process.argv.includes("--retries") ? 2 : 0;
 
 let calls = 0;
 const askAI = async (prompt) => { calls++; return geminiAskAI(prompt); };
 
 console.log(`Asking Gemini (${process.env.GEMINI_MODEL || "gemini-3.8-flash"}), max ${maxRetries + 1} call(s)...`);
-const r = await generatePlan({ targets, budget, askAI, maxRetries });
+const r = await generatePlan({ targets, budget, goal, askAI, maxRetries });
 console.log(`AI calls made: ${calls}\n`);
 
 if (!r.ok) {

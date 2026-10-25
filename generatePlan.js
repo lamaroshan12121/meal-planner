@@ -2,7 +2,7 @@
 // The AI is passed in as `askAI(prompt) -> plan object`, so tests can use a fake one. The real one is in gemini.js.
 // The AI only ever returns meal names, ingredient ids and grams. Every calorie, macro and dollar comes from plan.js.
 
-import { checkPlan } from "./plan.js";
+import { checkPlan, GOALS, KCAL_LIMITS } from "./plan.js";
 import { ingredients as defaultIngredients, PRICES_CHECKED } from "./ingredients.js";
 
 // What the AI is allowed to return: names, ids and grams. No calories, macros or prices.
@@ -37,7 +37,28 @@ export const planSchema = {
   required: ["days"],
 };
 
-export function buildPrompt({ targets, budget, ingredientList = defaultIngredients }) {
+// Lowest and highest daily kcal a gain plan may have (the tiny offset guards against float noise like 1710.0000000000002).
+const gainMin = (kcal) => Math.ceil(kcal * (1 - KCAL_LIMITS.gain.under) - 1e-9);
+const gainMax = (kcal) => Math.floor(kcal * (1 + KCAL_LIMITS.gain.over) + 1e-9);
+
+// The calorie wording depends on the goal. Gain: a day may go over (up to a 50% sanity limit) but not under by more than 10%.
+function calorieLines(targets, goal) {
+  if (goal === "gain") {
+    const min = gainMin(targets.kcal);
+    const max = gainMax(targets.kcal);
+    return {
+      target: `- About ${targets.kcal} kcal. This person wants to GAIN weight, so going over is fine.`,
+      rule: `- Each day's lunch plus dinner must be at least ${min} kcal (no more than 10% under ${targets.kcal}) and no more than ${max} kcal. Use the per100g nutrition below to pick grams.`,
+    };
+  }
+  return {
+    target: `- About ${targets.kcal} kcal`,
+    rule: `- Pick grams so each day's lunch plus dinner lands close to ${targets.kcal} kcal (within 10%), using the per100g nutrition below.`,
+  };
+}
+
+export function buildPrompt({ targets, budget, goal = "maintain", ingredientList = defaultIngredients }) {
+  const cal = calorieLines(targets, goal);
   const list = ingredientList.map((i) => ({
     id: i.id,
     name: i.name,
@@ -51,7 +72,7 @@ export function buildPrompt({ targets, budget, ingredientList = defaultIngredien
   return `You are a meal prep planner for one person on a budget. Build a 5-day plan (Monday to Friday) with one lunch and one dinner each day.
 
 Targets (for lunch and dinner COMBINED each day):
-- About ${targets.kcal} kcal
+${cal.target}
 - At least ${targets.protein} g protein
 Weekly grocery budget: $${budget} AUD (shopping prices from ALDI, checked ${PRICES_CHECKED}).
 
@@ -62,7 +83,7 @@ Rules:
 - No meal may appear more than twice in the week, and meals must not repeat the same ingredients and grams under different names.
 - Keep the whole week within the budget. Items with pricing "pack" are bought in whole packs (packGrams for the price), so reusing the same ingredients across meals wastes less. Items with pricing "weight" cost price per 1000 g, only for the grams you use.
 - Prefer simple meals that can be cooked in batches.
-- Pick grams so each day's lunch plus dinner lands close to ${targets.kcal} kcal (within 10%), using the per100g nutrition below.
+${cal.rule}
 
 Ingredients (nutrition per 100 g):
 ${JSON.stringify(list, null, 1)}
@@ -71,14 +92,25 @@ Return the plan as JSON: { "days": [ { "day": "Mon", "lunch": { "name": "...", "
 }
 
 // A follow-up prompt for a retry: the original instructions, the last answer, and what code found wrong with it.
-export function buildRetryPrompt({ basePrompt, previousPlan, check }) {
+export function buildRetryPrompt({ basePrompt, previousPlan, check, targets, goal = "maintain" }) {
   const lines = check.ok ? check.problems.map((p) => `- ${p.message}`) : check.errors.map((e) => `- ${e}`);
   const hints = [];
-  if (check.ok && check.problems.some((p) => p.type === "over-budget")) {
+  const has = (type, direction) => check.ok && check.problems.some((p) => p.type === type && (!direction || p.direction === direction));
+  const isGain = goal === "gain";
+
+  if (has("over-budget")) {
     const top = [...check.shoppingList].sort((a, b) => b.cost - a.cost).slice(0, 3);
-    hints.push(
-      `Use cheaper ingredients or smaller amounts. The most expensive items were: ${top.map((l) => `${l.ingredientId} ($${l.cost.toFixed(2)})`).join(", ")}.`
-    );
+    const expensive = `The most expensive items were: ${top.map((l) => `${l.ingredientId} ($${l.cost.toFixed(2)})`).join(", ")}.`;
+    // On a gain plan, never suggest smaller portions: calories must stay up.
+    hints.push(isGain
+      ? `Use cheaper ingredients, but keep calories up: every day must still reach at least ${gainMin(targets.kcal)} kcal. ${expensive}`
+      : `Use cheaper ingredients or smaller amounts. ${expensive}`);
+  }
+  if (isGain && has("day-calories", "under")) {
+    hints.push(`Add calories on the days that are too low (bigger portions or calorie-dense ingredients) so every day reaches at least ${gainMin(targets.kcal)} kcal.`);
+  }
+  if (isGain && has("day-calories", "over")) {
+    hints.push(`Cut calories only on the days over the ${gainMax(targets.kcal)} kcal limit, and keep every day at or above ${gainMin(targets.kcal)} kcal.`);
   }
   return `${basePrompt}
 
@@ -93,15 +125,17 @@ ${JSON.stringify(previousPlan)}
 Fix these problems and return the full corrected plan in the same JSON format.`;
 }
 
-// targets: the lunchDinner object from calculateTargets. budget: weekly dollars.
+// targets: the lunchDinner object from calculateTargets. budget: weekly dollars. goal: "lose" | "maintain" | "gain".
 // Returns { ok: true, plan, check, attempts, passes, history } (plan may still have problems; see check.problems),
 // or { ok: false, error, attempts } if the AI call failed or never gave a usable plan.
-export async function generatePlan({ targets, budget, askAI, maxRetries = 2, ingredientList = defaultIngredients }) {
+export async function generatePlan({ targets, budget, goal, askAI, maxRetries = 2, ingredientList = defaultIngredients }) {
   if (typeof askAI !== "function") return { ok: false, error: "No AI function provided.", attempts: 0 };
   if (!targets || !(targets.kcal > 0)) return { ok: false, error: "Targets need a positive kcal.", attempts: 0 };
   if (!(typeof budget === "number" && budget > 0)) return { ok: false, error: "Budget must be a positive number.", attempts: 0 };
 
-  const basePrompt = buildPrompt({ targets, budget, ingredientList });
+  if (!GOALS.includes(goal)) return { ok: false, error: 'Goal must be "lose", "maintain" or "gain".', attempts: 0 };
+
+  const basePrompt = buildPrompt({ targets, budget, goal, ingredientList });
   let prompt = basePrompt;
   let best = null;       // best attempt with a correctly shaped plan: { plan, check }
   let last = null;       // most recent attempt, shaped or not
@@ -125,13 +159,13 @@ export async function generatePlan({ targets, budget, askAI, maxRetries = 2, ing
       return { ok: false, error: msg, attempts };
     }
 
-    const check = checkPlan(plan, targets, budget, ingredientList);
+    const check = checkPlan(plan, targets, budget, ingredientList, { goal });
     last = { plan, check };
     history.push({ attempt: attempts, problems: check.ok ? check.problems.map((p) => p.message) : check.errors });
 
     if (check.ok && (!best || check.problems.length <= best.check.problems.length)) best = last;
     if (check.ok && check.passes) break;
-    if (i < maxRetries) prompt = buildRetryPrompt({ basePrompt, previousPlan: plan, check });
+    if (i < maxRetries) prompt = buildRetryPrompt({ basePrompt, previousPlan: plan, check, targets, goal });
   }
 
   if (!best) {
