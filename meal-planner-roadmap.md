@@ -27,7 +27,7 @@
 **Done when:** a test script matches a hand calculation within 5%.
 
 ## Stage 4: AI picks the meals
-- [ ] Not started
+- [x] Code done and tested with a fake AI (`generatePlan.js`, `gemini.js`, `api/plan.js`). Still to do: run `node try-plan.js` once with a real key.
 **Goal:** `api/plan.js` sends the targets, budget and ingredient list to Gemini, gets a structured JSON plan, runs the Stage 3 checks, and retries with cheaper ingredients up to 2 times.
 **Done when:** a generated plan passes the checks, or comes back with an "over budget by $X" note.
 

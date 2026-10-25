@@ -89,6 +89,19 @@ near("plan1 lines sum to total", r1.shoppingList.reduce((s, l) => s + l.cost, 0)
 // Traceability: a meal's items add up to the meal total
 near("plan1 Mon lunch items sum", r1.meals[0].items.reduce((s, i) => s + i.kcal, 0), r1.meals[0].totals.kcal, 0.5);
 
+// Estimated cost per meal (display only): grams used / pack size * price, "weight" items per 1000 g.
+//   Mon lunch M1: chicken 0.25 kg * 11.99 = 2.9975 + rice 140/2000 * 3.59 = 0.2513 + veg 150/1000 * 2.79 = 0.4185 = 3.6673 -> $3.67
+//   Mon dinner M2: beef 150/500 * 6.49 = 1.947 + pasta 140/500 * 0.89 = 0.2492 + tomatoes 200/400 * 0.95 = 0.475 = 2.6712 -> $2.67
+near("plan1 Mon lunch estCost", r1.meals[0].estCost, 3.67, 0.001);
+near("plan1 Mon dinner estCost", r1.meals[1].estCost, 2.67, 0.001);
+// Whole week by grams used (no pack rounding): chicken 13.189 + rice 0.8616 + veg 1.953 + beef 3.894 + pasta 0.4984
+//   + tomatoes 0.95 + eggs 480/620*5.29 = 4.0955 + potatoes 7.182 + oil 60/920*4.99 = 0.3254 + lentils 0.676 + beans 1.116 = 34.74
+// The ten rounded meal estimates add up to about that (within a few cents), and are less than the real $49.84 because packs have leftovers.
+const mealSum = r1.meals.reduce((s, m) => s + m.estCost, 0);
+near("plan1 meal estimates sum to grams-used cost", mealSum, 34.74, 0.06);
+eq("plan1 estimates below whole-pack total", mealSum < r1.cost.total, true);
+eq("plan1 has a cost note", typeof r1.mealCostNote === "string" && r1.mealCostNote.includes("estimates"), true);
+
 // Budget edge: $49.84 exactly is fine, one cent less is over by $0.01
 eq("plan1 at exact budget", checkPlan(plan1, TARGET, 49.84).passes, true);
 const r1tight = checkPlan(plan1, TARGET, 49.83);
@@ -118,6 +131,8 @@ const P4 = () => meal("Salmon and lentils", ["salmon", 250], ["red-lentils", 100
 const P5 = () => meal("Salmon, peas and rice", ["salmon", 250], ["frozen-peas", 300], ["rice", 50]);
 const r2 = checkPlan(week([[P1(), P2()], [P3(), P4()], [P5(), P1()], [P2(), P3()], [P4(), P5()]]), TARGET, 65);
 eq("plan2 Mon kcal", r2.days[0].totals.kcal, 1776);
+// P1: salmon 250/250 * 7.99 = 7.99 + rice 100/2000 * 3.59 = 0.1795 = 8.1695 -> $8.17
+near("plan2 Mon lunch estCost", r2.meals[0].estCost, 8.17, 0.001);
 eq("plan2 Wed kcal", r2.days[2].totals.kcal, 1798); // 1797.5 rounds up
 eq("plan2 salmon packs", line(r2, "salmon").packs, 10);
 near("plan2 salmon cost", line(r2, "salmon").cost, 79.9, 0.001);

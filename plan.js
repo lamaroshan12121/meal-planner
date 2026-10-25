@@ -59,6 +59,7 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
     for (const slot of SLOTS) {
       const meal = d[slot];
       const mealTotals = emptyTotals();
+      let mealCost = 0; // estimate only: the share of each pack this meal uses (see estCost below)
       const items = [];
 
       for (const it of meal.items) {
@@ -76,13 +77,16 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
         const f = it.grams / 100;
         const contrib = { kcal: ing.per100g.kcal * f, protein: ing.per100g.protein * f, carbs: ing.per100g.carbs * f, fat: ing.per100g.fat * f };
         addInto(mealTotals, contrib);
+        mealCost += ing.pricing === "pack" ? (it.grams / ing.packGrams) * ing.price : (it.grams / 1000) * ing.price;
         gramsNeeded.set(ing.id, (gramsNeeded.get(ing.id) || 0) + it.grams);
         items.push({ ingredientId: ing.id, name: ing.name, grams: it.grams, kcal: round1(contrib.kcal),
           protein: round1(contrib.protein), carbs: round1(contrib.carbs), fat: round1(contrib.fat) });
       }
 
       addInto(dayTotals, mealTotals);
-      meals.push({ day: dayName, slot, name: meal.name, totals: roundTotals(mealTotals), items,
+      // estCost is DISPLAY ONLY: grams used / pack size * price. You still pay for whole packs, so the meals'
+      // estimates add up to less than the weekly total. The weekly cost below is the real (whole-pack) number.
+      meals.push({ day: dayName, slot, name: meal.name, totals: roundTotals(mealTotals), estCost: dollars(toCents(mealCost)), items,
         _signature: meal.items.map((it) => `${it.ingredientId}:${it.grams}`).sort().join(",") });
     }
 
@@ -147,6 +151,7 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
     days,
     week: { totals: roundTotals(weekTotals) },
     cost: { total: dollars(totalCents), budget: weeklyBudget, overBy: Math.max(0, dollars(totalCents - budgetCents)) },
+    mealCostNote: "Per-meal costs are estimates (grams used / pack size x price). The weekly total counts whole packs.",
     shoppingList,
     problems,
     passes: problems.length === 0,
