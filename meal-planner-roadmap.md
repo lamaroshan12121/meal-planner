@@ -22,7 +22,7 @@
 **Done when:** a test script checks 3 people by hand, with caps on deficit and surplus.
 
 ## Stage 3: Plan calculator and checker (code only)
-- [ ] Not started
+- [x] Done (`plan.js`, tested by `test-plan.js`)
 **Goal:** given a plan (10 meals as ingredient + grams), code returns per-meal and per-day macros, weekly cost (whole packs rounded up), a shopping list, and flags for unknown ingredients, over budget and repeats.
 **Done when:** a test script matches a hand calculation within 5%.
 
