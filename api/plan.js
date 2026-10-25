@@ -28,8 +28,11 @@ export function createHandler(askAI) {
 
     return res.status(200).json({
       targets,
-      plan: result.plan,
-      check: result.check,
+      recipes: result.recipes,               // the AI's two recipes: name + { ingredientId, grams } for one serving
+      plan: result.check.plan,               // the 5 days (the same lunch and dinner Mon to Fri)
+      check: result.check,                   // per-serving numbers, days, cost, problems...
+      shoppingList: result.check.shoppingList, // grams, whole packs and cost for 5 servings of each recipe
+      servings: result.check.servings,
       attempts: result.attempts,
       passes: result.passes,
       ...(result.retryError && { retryError: result.retryError }),

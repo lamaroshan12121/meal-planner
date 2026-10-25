@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"node test-ingredients.js\"}",
-  "error": "Exit code 1\nFAIL: frozen-green-beans: kcal 31 vs macros-implied 37 (19% off)\n1 check(s) failed",
-  "timestamp": "2026-10-25T03:04:39.866Z",
+  "tool_input_preview": "{\"command\":\"node - <<'EOF'\\nconst fs = require('fs');\\nlet s = fs.readFileSync('test-plan.js', 'utf8');\\nconst rep = (from, to) => { if (!s.includes(from)) throw new Error('missing: ' + from.slice(0, ...",
+  "error": "Exit code 2\n/usr/bin/bash: -c: line 100: unexpected EOF while looking for matching `''",
+  "timestamp": "2026-10-25T03:50:40.234Z",
   "retry_count": 1
 }

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node test-ingredients.js && node test-targets.js && node test-plan.js && node test-generate-plan.js",
+    "test": "node test-ingredients.js && node test-targets.js && node test-plan.js && node test-generate-plan.js && node test-web-lib.js",
     "try-plan": "node try-plan.js"
   },
   "dependencies": {

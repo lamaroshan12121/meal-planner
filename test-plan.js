@@ -1,6 +1,7 @@
 // Run: node test-plan.js
 // Expected values were worked out by hand from ingredients.js (see the comments), not copied from the function.
-import { checkPlan } from "./plan.js";
+import { checkPlan, checkRecipes, expandRecipes } from "./plan.js";
+import { goodRecipes, salmonRecipes, messyRecipes } from "./test-fixtures.js";
 
 const TARGET = { kcal: 1767, protein: 67, carbs: 265, fat: 49 }; // lunch + dinner target (the Stage 2 example person)
 
@@ -144,16 +145,16 @@ eq("plan2 message names the amount", r2.problems[0].message.includes("$27.15"), 
 eq("plan2 passes", r2.passes, false);
 
 // =====================================================================================
-// PLAN 3: unknown ingredient + a day far off target + a meal used 3 times.
+// PLAN 3: unknown ingredient + a day far off target. (A meal used 3 times is no longer a problem: repeating is the point of bulk cooking.)
 //   Mon lunch  "Tuna pasta": tuna 185 g (100 kcal/100 g = 185) + pasta 100 g (371) = 556
 //   Mon dinner "Wagyu stew": wagyu-beef 200 g (NOT IN THE LIST, ignored) + rice 100 g (365) = 365
 //   Mon = 921 kcal: (921 - 1767) / 1767 = -47.9%, far outside 10%.
 //   Tue M1+M1 = 1802 (+2.0%), Wed M1+M2 = 901+874.4 = 1775.4, Thu M2+M3 = 1691, Fri M4+M3 = 931.4+816.6 = 1748
-//   "Chicken rice bowl" (M1) appears Tue lunch, Tue dinner, Wed lunch = 3 times, so it is flagged. M2 and M3 appear twice (allowed).
+//   "Chicken rice bowl" (M1) appears Tue lunch, Tue dinner, Wed lunch = 3 times, which is allowed now.
 //   Cost (unknown ingredient costs nothing): tuna 1.69 + pasta (100+140*2=380 g, 1 pack) 0.89 + rice (100+140*3+100=620 g, 1 pack) 3.59
 //   + chicken 750 g weight 0.75*11.99=8.9925 -> 8.99 + veg (150*3+200=650 g, 1 pack) 2.79 + beef 300 g 6.49 + tomatoes 400 g 0.95
 //   + eggs 480 g 5.29 + potatoes 1000 g, 1.0*3.99 = 3.99 + oil 30 g 4.99 + lentils 100 g 1.69 = $41.35 (under $65)
-//   Expected problems: unknown-ingredient, day-calories (Mon), repeated-meal. No over-budget.
+//   Expected problems: unknown-ingredient, day-calories (Mon). No over-budget.
 // =====================================================================================
 const r3 = checkPlan(week([
   [meal("Tuna pasta", ["tuna", 185], ["pasta", 100]), meal("Wagyu stew", ["wagyu-beef", 200], ["rice", 100])],
@@ -163,16 +164,12 @@ const r3 = checkPlan(week([
   [M4(), M3()],
 ]), TARGET, 65);
 eq("plan3 ok", r3.ok, true);
-eq("plan3 problems", types(r3), "day-calories,repeated-meal,unknown-ingredient");
+eq("plan3 problems", types(r3), "day-calories,unknown-ingredient");
 eq("plan3 unknown id", r3.problems.find((p) => p.type === "unknown-ingredient").ingredientId, "wagyu-beef");
 eq("plan3 Mon dinner kcal ignores unknown", r3.meals[1].totals.kcal, 365);
 eq("plan3 Mon kcal", r3.days[0].totals.kcal, 921);
 near("plan3 Mon diffPct", r3.days[0].diffPct, -47.9);
 eq("plan3 only Mon flagged", r3.problems.filter((p) => p.type === "day-calories").map((p) => p.day).join(), "Mon");
-const rep = r3.problems.find((p) => p.type === "repeated-meal");
-eq("plan3 repeated meal", rep.name, "Chicken rice bowl");
-eq("plan3 repeated count", rep.count, 3);
-eq("plan3 repeated where", rep.where.join(), "Tue lunch,Tue dinner,Wed lunch");
 eq("plan3 wagyu not in shopping list", r3.shoppingList.some((l) => l.ingredientId === "wagyu-beef"), false);
 near("plan3 chicken cost", line(r3, "chicken-breast").cost, 8.99, 0.001);
 near("plan3 total cost", r3.cost.total, 41.35, 0.001);
@@ -183,7 +180,6 @@ near("plan3 total cost", r3.cost.total, 41.35, 0.001);
 // The 10% limit: exactly 10% off is allowed, only "more than 10%" is flagged.
 // Custom food "x" has 100 kcal per 100 g, so 1 g = 1 kcal. Every day = lunch grams + 500 g dinner. Target 1000 kcal.
 //   lunch 600 g -> day 1100 (exactly +10%): allowed.  lunch 610 -> 1110 (+11%): flagged.  lunch 400 -> 900 (exactly -10%): allowed.
-// (The repeat flags also fire here because the fake meals are identical; we only look at day-calories.)
 const custom = [{ id: "x", name: "Test food", packGrams: 100, price: 1, pricing: "pack", per100g: { kcal: 100, protein: 0, carbs: 0, fat: 0 } }];
 const tenDay = (grams) => week(Array.from({ length: 5 }, (_, i) => [meal(`A${i}`, ["x", grams]), meal(`B${i}`, ["x", 500])]));
 const dayFlagged = (grams, goal) => checkPlan(tenDay(grams), { kcal: 1000 }, 9999, custom, goal ? { goal } : {}).problems.some((p) => p.type === "day-calories");
@@ -230,19 +226,9 @@ eq("gain target 1100: 5 days over the sanity limit", g50.problems.filter((p) => 
 eq("gain over message names the sanity limit", g50.problems[0].message.includes("sanity limit is 50% above"), true);
 eq("gain under message says gain plan", checkPlan(plan1, { kcal: 1900 }, 65, undefined, { goal: "gain" }).problems[0].message.includes("a gain plan may be at most 10% below"), true);
 
-// Repeats: same name in different case counts as the same meal; same ingredients and grams under a new name also counts.
-const sneaky = week([
-  [meal("Chicken rice bowl", ["chicken-breast", 250], ["rice", 140]), meal("chicken  RICE bowl", ["chicken-breast", 100])],
-  [meal("Bowl X", ["rice", 100]), meal("Bowl Y", ["rice", 100])],
-  [meal("Bowl Z", ["rice", 100]), meal("Other 1", ["pasta", 100])],
-  [meal("Other 2", ["pasta", 120]), meal("Other 3", ["pasta", 130])],
-  [meal("Chicken rice bowl", ["tuna", 100]), meal("Other 4", ["pasta", 140])],
-]);
-const rs = checkPlan(sneaky, TARGET, 999);
-const repeats = rs.problems.filter((p) => p.type === "repeated-meal");
-eq("repeats: two groups found", repeats.length, 2);
-eq("repeats: name group of 3", repeats.find((p) => p.name === "Chicken rice bowl")?.count, 3);
-eq("repeats: same-ingredients group of 3", repeats.find((p) => p.name === "Bowl X")?.count, 3);
+// Repeats are NOT a problem any more: the same meal 10 times (identical names and ingredients) raises no flag.
+const same = checkPlan(week(Array.from({ length: 5 }, () => [M1(), M1()])), TARGET, 999);
+eq("repeated meals are not flagged", same.problems.some((p) => p.type === "repeated-meal"), false);
 
 // Bad grams are flagged and left out
 const rg = checkPlan(week(Array.from({ length: 5 }, (_, i) => [meal(`L${i}`, ["rice", -5]), meal(`D${i}`, ["pasta", 100])])), TARGET, 999);
@@ -255,6 +241,106 @@ eq("missing meal name rejected", checkPlan(week(Array.from({ length: 5 }, () => 
 eq("empty items rejected", checkPlan(week(Array.from({ length: 5 }, () => [meal("Empty"), M1()])), TARGET, 65).ok, false);
 eq("bad budget rejected", checkPlan(plan1, TARGET, 0).ok, false);
 eq("bad target rejected", checkPlan(plan1, {}, 65).ok, false);
+
+// =====================================================================================
+// BULK COOKING: two recipes (one serving each), cooked once, eaten Mon to Fri = 5 servings of each.
+// Target 1767 kcal, budget $65. Per-serving numbers are the same as meals M1 and M2 above:
+//   Lunch  "Chicken rice bowl": chicken 250 g, rice 140 g, mixed veg 150 g  -> 901 kcal, P 70.69, C 127, F 8.23, est $3.67
+//   Dinner "Beef pasta":        beef mince 150 g, pasta 140 g, tomatoes 200 g -> 874.4 kcal, P 48.7, C 112.58, F 23.3, est $2.67
+//   Each day = 1775.4 kcal (+0.5%), P 119.39. Week = 5 * 1775.4 = 8877 kcal.
+// Shopping list (grams x 5, whole packs):
+//   chicken 250*5 = 1250 g, "weight": 1.25 * 11.99 = 14.9875 -> $14.99
+//   rice    140*5 = 700 g   -> 1 pack of 2000 = $3.59 (1300 g left over)
+//   veg     150*5 = 750 g   -> 1 pack of 1000 = $2.79 (250 g left over)
+//   beef    150*5 = 750 g   -> 2 packs of 500 = 2 * 6.49 = $12.98 (250 g left over)
+//   pasta   140*5 = 700 g   -> 2 packs of 500 = 2 * 0.89 = $1.78 (300 g left over)
+//   tomatoes 200*5 = 1000 g -> 2.5 packs of 400, so 3 packs = 3 * 0.95 = $2.85 (200 g left over)
+//   Total = 14.99 + 3.59 + 2.79 + 12.98 + 1.78 + 2.85 = $38.98, under $65.
+// =====================================================================================
+{
+  const days5 = expandRecipes(goodRecipes());
+  eq("expand: 5 days", days5.days.length, 5);
+  eq("expand: Mon to Fri", days5.days.map((d) => d.day).join(), "Mon,Tue,Wed,Thu,Fri");
+  eq("expand: every day has the same lunch", days5.days.every((d) => d.lunch.name === "Chicken rice bowl"), true);
+  eq("expand: every day has the same dinner", days5.days.every((d) => d.dinner.name === "Beef pasta"), true);
+
+  const b = checkRecipes(goodRecipes(), TARGET, 65, undefined, { goal: "gain" });
+  eq("bulk ok", b.ok, true);
+  eq("bulk servings", b.servings, 5);
+  eq("bulk passes", b.passes, true);
+  eq("bulk has 5 days", b.days.length, 5);
+  eq("bulk every day 1775 kcal", b.days.every((d) => d.totals.kcal === 1775), true);
+  near("bulk day protein", b.days[0].totals.protein, 119.4);
+  eq("bulk week kcal", b.week.totals.kcal, 8877);
+  eq("bulk lunch per-serving kcal", b.recipes.lunch.totals.kcal, 901);
+  near("bulk lunch per-serving protein", b.recipes.lunch.totals.protein, 70.7);
+  near("bulk lunch est cost per serving", b.recipes.lunch.estCost, 3.67);
+  eq("bulk dinner per-serving kcal", b.recipes.dinner.totals.kcal, 874);
+  near("bulk dinner est cost per serving", b.recipes.dinner.estCost, 2.67);
+  eq("bulk lunch name", b.recipes.lunch.name, "Chicken rice bowl");
+  const chicken = b.recipes.lunch.items.find((i) => i.ingredientId === "chicken-breast");
+  eq("bulk chicken: one serving 250 g", chicken.grams, 250);
+  eq("bulk chicken: batch 1250 g", chicken.batchGrams, 1250);
+  eq("bulk rice batch 700 g", b.recipes.lunch.items.find((i) => i.ingredientId === "rice").batchGrams, 700);
+  near("bulk total cost", b.cost.total, 38.98);
+  eq("bulk shopping lines", b.shoppingList.length, 6);
+  near("bulk chicken cost", line(b, "chicken-breast").cost, 14.99);
+  eq("bulk chicken grams", line(b, "chicken-breast").grams, 1250);
+  eq("bulk beef packs (750 g = 2 packs)", line(b, "beef-mince").packs, 2);
+  near("bulk beef cost", line(b, "beef-mince").cost, 12.98);
+  eq("bulk pasta packs (700 g = 2 packs)", line(b, "pasta").packs, 2);
+  eq("bulk tomatoes packs (1000 g = 3 packs)", line(b, "diced-tomatoes").packs, 3);
+  near("bulk tomatoes cost", line(b, "diced-tomatoes").cost, 2.85);
+  eq("bulk rice leftover", line(b, "rice").leftoverGrams, 1300);
+  eq("bulk tomatoes leftover", line(b, "diced-tomatoes").leftoverGrams, 200);
+  eq("bulk no problems", b.problems.length, 0);
+  eq("bulk plan is returned", b.plan.days.length, 5);
+
+  // Over budget: salmon 250 g in both recipes. Salmon 250*5*2 = 2500 g = exactly 10 packs = $79.90, rice 500 g = $3.59,
+  // pasta 500 g = exactly 1 pack = $0.89. Total $84.38, so $19.38 over $65. Day = 885 + 891 = 1776 kcal.
+  const o = checkRecipes(salmonRecipes(), TARGET, 65, undefined, { goal: "gain" });
+  near("salmon bulk cost", o.cost.total, 84.38);
+  near("salmon bulk overBy", o.cost.overBy, 19.38);
+  eq("salmon bulk salmon packs", line(o, "salmon").packs, 10);
+  eq("salmon bulk problems", types(o), "over-budget");
+  eq("salmon bulk message", o.problems[0].message.includes("Over budget by $19.38"), true);
+  eq("salmon bulk day kcal", o.days[0].totals.kcal, 1776);
+
+  // Unknown ingredient + off-target day. Lunch tuna 185 + pasta 100 = 556; dinner wagyu (unknown, ignored) + rice 100 = 365; day 921 (-47.9%).
+  // Cost: tuna 925 g = exactly 5 packs = $8.45, pasta 500 g = $0.89, rice 500 g = $3.59 = $12.93.
+  // Problems are reported ONCE (not once per day): one unknown-ingredient, one day-calories.
+  const m = checkRecipes(messyRecipes(), TARGET, 65, undefined, { goal: "gain" });
+  eq("messy bulk problems", types(m), "day-calories,unknown-ingredient");
+  eq("messy bulk: one problem each", m.problems.length, 2);
+  eq("messy bulk unknown message", m.problems.find((p) => p.type === "unknown-ingredient").message, 'Dinner "Wagyu stew": unknown ingredient "wagyu-beef" (ignored in the totals).');
+  eq("messy bulk day message", m.problems.find((p) => p.type === "day-calories").message.startsWith("Each day is 921 kcal, 47.9% below the 1767 kcal target"), true);
+  eq("messy bulk day marker", m.problems.find((p) => p.type === "day-calories").day, "Every day");
+  near("messy bulk cost", m.cost.total, 12.93);
+  eq("messy bulk tuna packs", line(m, "tuna").packs, 5);
+  eq("messy bulk wagyu not shopped", m.shoppingList.some((l) => l.ingredientId === "wagyu-beef"), false);
+  eq("messy bulk dinner per-serving kcal ignores unknown", m.recipes.dinner.totals.kcal, 365);
+
+  // The goal still sets the calorie rule: a day of 1775.4 against a 1300 target is +36.6%
+  eq("bulk gain 35% over passes", checkRecipes(goodRecipes(), { kcal: 1300 }, 65, undefined, { goal: "gain" }).passes, true);
+  const mo = checkRecipes(goodRecipes(), { kcal: 1300 }, 65, undefined, { goal: "maintain" });
+  eq("bulk maintain 35% over fails", mo.passes, false);
+  eq("bulk maintain: flagged once", mo.problems.length, 1);
+  eq("bulk maintain message", mo.problems[0].message, "Each day is 1775 kcal, 36.6% above the 1300 kcal target (limit 10%).");
+
+  // Badly shaped recipes give clear errors
+  const bad = (label, recipes, text) => {
+    const r = checkRecipes(recipes, TARGET, 65);
+    eq(`bad recipes: ${label} not ok`, r.ok, false);
+    eq(`bad recipes: ${label} message`, r.errors?.some((e) => e.includes(text)), true);
+  };
+  bad("missing", undefined, "Recipes are missing");
+  bad("no dinner", { lunch: goodRecipes().lunch }, "Dinner recipe is missing");
+  bad("no name", { lunch: { items: [{ ingredientId: "rice", grams: 1 }] }, dinner: goodRecipes().dinner }, "Lunch recipe needs a name");
+  bad("no items", { lunch: goodRecipes().lunch, dinner: { name: "Empty", items: [] } }, "Dinner recipe needs at least one ingredient");
+  bad("bad item", { lunch: goodRecipes().lunch, dinner: { name: "X", items: [null] } }, "each ingredient must be");
+  eq("old 5-day shape is not accepted as recipes", checkRecipes({ days: plan1.days }, TARGET, 65).ok, false);
+  eq("checkRecipes bad goal", checkRecipes(goodRecipes(), TARGET, 65, undefined, { goal: "bulk" }).ok, false);
+}
 
 console.log(failed ? `${failed} check(s) failed` : "OK: all plan tests passed");
 process.exit(failed ? 1 : 0);

@@ -1,7 +1,11 @@
 // Stage 3: plan calculator and checker. Pure maths, no AI.
-// The AI (later) only supplies meal names and { ingredientId, grams }. Everything else is worked out here from ingredients.js.
+// The AI only supplies two recipes, each a name and { ingredientId, grams } for ONE serving. Everything else is worked out
+// here from ingredients.js.
 //
-// plan = { days: [ { day: "Mon", lunch: Meal, dinner: Meal }, ... 5 days ] }
+// BULK COOKING: recipes = { lunch: Meal, dinner: Meal }. expandRecipes turns them into 5 identical days (Mon to Fri), and
+// checkRecipes checks that plan, so the shopping list and cost are for 5 servings of each recipe.
+//
+// plan = { days: [ { day: "Mon", lunch: Meal, dinner: Meal }, ... 5 days ] }   (checkPlan accepts any 5 days, identical or not)
 // Meal = { name: "Chicken rice bowl", items: [ { ingredientId: "rice", grams: 140 }, ... ] }
 
 import { ingredients as defaultIngredients } from "./ingredients.js";
@@ -17,7 +21,8 @@ export const KCAL_LIMITS = {
   maintain: { under: 0.1, over: 0.1 },
   gain: { under: 0.1, over: 0.5 },
 };
-const MAX_REPEATS = 2;      // the same meal may appear at most twice
+export const SERVINGS = 5;  // bulk cooking: each recipe is eaten once a day, Monday to Friday
+const SLOT_LABELS = { lunch: "Lunch", dinner: "Dinner" };
 
 const round1 = (n) => Math.round(n * 10) / 10;
 const toCents = (dollars) => Math.round(dollars * 100);
@@ -25,7 +30,6 @@ const dollars = (cents) => cents / 100;
 const emptyTotals = () => ({ kcal: 0, protein: 0, carbs: 0, fat: 0 });
 const addInto = (a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; };
 const roundTotals = (t) => ({ kcal: Math.round(t.kcal), protein: round1(t.protein), carbs: round1(t.carbs), fat: round1(t.fat) });
-const normaliseName = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
 function validateShape(plan, dailyTargets, weeklyBudget, goal) {
   const errors = [];
@@ -51,8 +55,11 @@ function validateShape(plan, dailyTargets, weeklyBudget, goal) {
 // dailyTargets: the `lunchDinner` object from calculateTargets (needs .kcal)
 // Returns { ok: false, errors } if the plan is not even shaped right, otherwise { ok: true, ... , problems }.
 // options.goal: "lose" | "maintain" | "gain" (default "maintain"); it sets how far a day may be from the calorie target.
+// options.collapseDays: for identical days (bulk cooking). A problem is reported once, for "Each day" / "Lunch" / "Dinner",
+//   instead of five times. The totals and shopping list still count all 5 days.
 export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = defaultIngredients, options = {}) {
   const goal = options.goal ?? "maintain";
+  const collapse = options.collapseDays === true;
   const errors = validateShape(plan, dailyTargets, weeklyBudget, goal);
   if (errors.length) return { ok: false, errors };
   const limits = KCAL_LIMITS[goal];
@@ -67,9 +74,11 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
   plan.days.forEach((d, dayIndex) => {
     const dayName = DAY_NAMES[dayIndex];
     const dayTotals = emptyTotals();
+    const report = (problem) => { if (!collapse || dayIndex === 0) problems.push(problem); };
 
     for (const slot of SLOTS) {
       const meal = d[slot];
+      const where = collapse ? SLOT_LABELS[slot] : `${dayName} ${slot}`;
       const mealTotals = emptyTotals();
       let mealCost = 0; // estimate only: the share of each pack this meal uses (see estCost below)
       const items = [];
@@ -77,13 +86,13 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
       for (const it of meal.items) {
         const ing = byId.get(it.ingredientId);
         if (!ing) {
-          problems.push({ type: "unknown-ingredient", day: dayName, meal: slot, ingredientId: it.ingredientId,
-            message: `${dayName} ${slot} "${meal.name}": unknown ingredient "${it.ingredientId}" (ignored in the totals).` });
+          report({ type: "unknown-ingredient", day: dayName, meal: slot, ingredientId: it.ingredientId,
+            message: `${where} "${meal.name}": unknown ingredient "${it.ingredientId}" (ignored in the totals).` });
           continue;
         }
         if (typeof it.grams !== "number" || !Number.isFinite(it.grams) || it.grams <= 0) {
-          problems.push({ type: "bad-grams", day: dayName, meal: slot, ingredientId: it.ingredientId,
-            message: `${dayName} ${slot} "${meal.name}": grams for "${it.ingredientId}" must be a positive number.` });
+          report({ type: "bad-grams", day: dayName, meal: slot, ingredientId: it.ingredientId,
+            message: `${where} "${meal.name}": grams for "${it.ingredientId}" must be a positive number.` });
           continue;
         }
         const f = it.grams / 100;
@@ -98,8 +107,7 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
       addInto(dayTotals, mealTotals);
       // estCost is DISPLAY ONLY: grams used / pack size * price. You still pay for whole packs, so the meals'
       // estimates add up to less than the weekly total. The weekly cost below is the real (whole-pack) number.
-      meals.push({ day: dayName, slot, name: meal.name, totals: roundTotals(mealTotals), estCost: dollars(toCents(mealCost)), items,
-        _signature: meal.items.map((it) => `${it.ingredientId}:${it.grams}`).sort().join(",") });
+      meals.push({ day: dayName, slot, name: meal.name, totals: roundTotals(mealTotals), estCost: dollars(toCents(mealCost)), items });
     }
 
     addInto(weekTotals, dayTotals);
@@ -112,8 +120,8 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
       const limitText = goal === "gain"
         ? (under ? "a gain plan may be at most 10% below" : "sanity limit is 50% above")
         : "limit 10%";
-      problems.push({ type: "day-calories", day: dayName, kcal: Math.round(dayTotals.kcal), diffPct: round1(diffPct), direction,
-        message: `${dayName} is ${Math.round(dayTotals.kcal)} kcal, ${Math.abs(round1(diffPct))}% ${under ? "below" : "above"} the ${dailyTargets.kcal} kcal target (${limitText}).` });
+      report({ type: "day-calories", day: collapse ? "Every day" : dayName, kcal: Math.round(dayTotals.kcal), diffPct: round1(diffPct), direction,
+        message: `${collapse ? "Each day" : dayName} is ${Math.round(dayTotals.kcal)} kcal, ${Math.abs(round1(diffPct))}% ${under ? "below" : "above"} the ${dailyTargets.kcal} kcal target (${limitText}).` });
     }
   });
 
@@ -142,27 +150,6 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
       message: `Over budget by $${overBy.toFixed(2)} ($${dollars(totalCents).toFixed(2)} against $${weeklyBudget.toFixed(2)}).` });
   }
 
-  // Repeats: two meals count as identical if they share a name (ignoring case/spacing) or the exact same ingredients and grams.
-  const parent = meals.map((_, i) => i);
-  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  for (let i = 0; i < meals.length; i++) {
-    for (let j = i + 1; j < meals.length; j++) {
-      if (normaliseName(meals[i].name) === normaliseName(meals[j].name) || meals[i]._signature === meals[j]._signature) {
-        parent[find(i)] = find(j);
-      }
-    }
-  }
-  const groups = new Map();
-  meals.forEach((m, i) => { const r = find(i); groups.set(r, [...(groups.get(r) || []), m]); });
-  for (const group of groups.values()) {
-    if (group.length > MAX_REPEATS) {
-      const where = group.map((m) => `${m.day} ${m.slot}`);
-      problems.push({ type: "repeated-meal", name: group[0].name, count: group.length, where,
-        message: `"${group[0].name}" is used ${group.length} times (${where.join(", ")}); the limit is ${MAX_REPEATS}.` });
-    }
-  }
-  meals.forEach((m) => delete m._signature);
-
   return {
     ok: true,
     meals,
@@ -174,4 +161,53 @@ export function checkPlan(plan, dailyTargets, weeklyBudget, ingredientList = def
     problems,
     passes: problems.length === 0,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bulk cooking: two recipes (one serving each), cooked once and eaten Monday to Friday.
+// ---------------------------------------------------------------------------------------------
+
+// recipes = { lunch: Meal, dinner: Meal } -> a 5-day plan where every day is that lunch and that dinner.
+export function expandRecipes(recipes) {
+  return { days: DAY_NAMES.map((day) => ({ day, lunch: recipes.lunch, dinner: recipes.dinner })) };
+}
+
+function validateRecipes(recipes) {
+  const errors = [];
+  if (!recipes || typeof recipes !== "object") return ["Recipes are missing: need a lunch and a dinner."];
+  for (const slot of SLOTS) {
+    const m = recipes[slot];
+    const label = SLOT_LABELS[slot];
+    if (!m || typeof m !== "object") errors.push(`${label} recipe is missing.`);
+    else if (typeof m.name !== "string" || !m.name.trim()) errors.push(`${label} recipe needs a name.`);
+    else if (!Array.isArray(m.items) || m.items.length === 0) errors.push(`${label} recipe needs at least one ingredient.`);
+    else if (m.items.some((it) => !it || typeof it !== "object")) errors.push(`${label} recipe: each ingredient must be { ingredientId, grams }.`);
+  }
+  return errors;
+}
+
+// Checks two bulk-cooked recipes. Same arguments and options as checkPlan.
+// Returns { ok: false, errors } for badly shaped recipes, otherwise everything checkPlan returns plus:
+//   plan:    the 5 identical days
+//   recipes: { lunch, dinner }, each { slot, name, servings, totals, estCost, items } for ONE serving.
+//            Each item has grams (one serving) and batchGrams (the whole batch, x5).
+export function checkRecipes(recipes, dailyTargets, weeklyBudget, ingredientList = defaultIngredients, options = {}) {
+  const errors = validateRecipes(recipes);
+  if (errors.length) return { ok: false, errors };
+
+  const plan = expandRecipes(recipes);
+  const check = checkPlan(plan, dailyTargets, weeklyBudget, ingredientList, { ...options, collapseDays: true });
+  if (!check.ok) return check;
+
+  // Day 1 stands for every day, so its meals are the per-serving numbers.
+  const describe = (meal) => ({
+    slot: meal.slot,
+    name: meal.name,
+    servings: SERVINGS,
+    totals: meal.totals,
+    estCost: meal.estCost,
+    items: meal.items.map((i) => ({ ...i, batchGrams: Math.round(i.grams * SERVINGS * 100) / 100 })),
+  });
+  const [lunch, dinner] = check.meals;
+  return { ...check, plan, servings: SERVINGS, recipes: { lunch: describe(lunch), dinner: describe(dinner) } };
 }
