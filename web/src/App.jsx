@@ -5,6 +5,8 @@ import ErrorMessage from './components/ErrorMessage.jsx'
 import Results from './components/Results.jsx'
 import SampleLoader from './components/SampleLoader.jsx'
 import Notice from './components/Notice.jsx'
+import Intro from './components/Intro.jsx'
+import { IconBowl, IconRefresh } from './components/Icons.jsx'
 import { EMPTY_FORM } from './lib/profile.js'
 import { loadForm, saveForm, loadPlanRecord, savePlanRecord } from './lib/storage.js'
 import { requestPlan } from './lib/api.js'
@@ -50,8 +52,9 @@ export default function App() {
   }
 
   const cancel = () => abortRef.current?.abort()
-  const newPlan = () => { setSample(null); setFormOpen(true) }
-  const loadSample = (key) => { setSample(buildSample(key)); setFormOpen(false) }
+  const newPlan = () => { setSample(null); setFormOpen(true); window.scrollTo(0, 0) }
+  const loadSample = (key) => { setSample(buildSample(key)); setFormOpen(false); window.scrollTo(0, 0) }
+  const onResults = status === 'idle' && !showForm
 
   let screen
   if (status === 'loading') {
@@ -60,19 +63,33 @@ export default function App() {
     screen = <ErrorMessage message={error} onRetry={() => setStatus('idle')} />
   } else if (showForm) {
     screen = (
-      <>
-        <header className="page-header">
-          <h1>Meal Prep Planner</h1>
-          <p className="muted">A week of lunches and dinners that fits your calories and your budget.</p>
-        </header>
+      <div className="form-layout">
+        <div className="form-aside">
+          <Intro firstRun={!result} />
+          <SampleLoader onLoad={loadSample} />
+        </div>
         <ProfileForm initialForm={form} onSubmit={generate} onCancel={result ? () => setFormOpen(false) : undefined} />
-        <SampleLoader onLoad={loadSample} />
-        <Notice />
-      </>
+      </div>
     )
   } else {
     screen = <Results record={record} result={result} onNewPlan={newPlan} onCloseSample={() => setSample(null)} />
   }
 
-  return <main className="page">{screen}</main>
+  return (
+    <div className={`app${onResults ? ' app-results' : ''}`}>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <span className="brand">
+            <span className="brand-mark" aria-hidden="true"><IconBowl /></span>
+            Meal Prep Planner
+          </span>
+          {onResults && (
+            <button type="button" className="button button-secondary button-sm" onClick={newPlan}><IconRefresh /> New plan</button>
+          )}
+        </div>
+      </header>
+      <main className="page">{screen}</main>
+      {!onResults && <footer className="site-footer"><Notice /></footer>}
+    </div>
+  )
 }

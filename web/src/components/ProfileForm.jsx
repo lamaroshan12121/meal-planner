@@ -1,30 +1,79 @@
 import { useState } from 'react'
 import { ACTIVITY_OPTIONS, GOAL_OPTIONS, SEX_OPTIONS, validateForm } from '../lib/profile.js'
+import { IconAlert, IconLock } from './Icons.jsx'
 
-function Field({ id, label, hint, error, wide, children }) {
+// Short labels for the goal buttons (the values are the same as GOAL_OPTIONS).
+const GOAL_COPY = {
+  lose: { label: 'Lose', sub: 'Slim down' },
+  maintain: { label: 'Maintain', sub: 'Stay steady' },
+  gain: { label: 'Gain', sub: 'Build up' },
+}
+const BUDGET_PRESETS = ['60', '65', '70']
+
+// Sensible starting choices for a new user. Sex has no default: it is personal, so the user picks it.
+const withDefaults = (form) => ({ ...form, activity: form.activity || 'moderate', goal: form.goal || 'maintain' })
+
+function NumberField({ id, label, unit, value, onChange, error, inputMode = 'decimal' }) {
   return (
-    <div className={`field${wide ? ' field-wide' : ''}`}>
-      <label htmlFor={id}>{label}</label>
-      {children}
-      {hint && !error && <span className="muted" id={`${id}-hint`}>{hint}</span>}
-      {error && <span className="field-error" id={`${id}-error`} role="alert">{error}</span>}
+    <div className="field">
+      <label className="field-label" htmlFor={id}>{label}</label>
+      <div className="input-wrap">
+        <input
+          id={id}
+          className="input input-has-unit"
+          type="text"
+          inputMode={inputMode}
+          autoComplete="off"
+          value={value}
+          onChange={onChange}
+          aria-invalid={error ? 'true' : 'false'}
+          aria-describedby={error ? `${id}-error` : `${id}-unit`}
+        />
+        <span className="input-unit" id={`${id}-unit`}>{unit}</span>
+      </div>
+      {error && <span className="field-error" id={`${id}-error`}>{error}</span>}
+    </div>
+  )
+}
+
+// Real radio buttons, styled as a segmented control or a list of options.
+function ChoiceGroup({ name, label, hint, options, value, onChange, error, variant = 'segmented' }) {
+  const describedBy = [hint && `${name}-hint`, error && `${name}-error`].filter(Boolean).join(' ') || undefined
+  return (
+    <div className="field">
+      <span className="field-label" id={`${name}-label`}>{label}</span>
+      {hint && <span className="field-hint" id={`${name}-hint`}>{hint}</span>}
+      <div
+        role="radiogroup"
+        aria-labelledby={`${name}-label`}
+        aria-describedby={describedBy}
+        className={`${variant === 'list' ? 'option-list' : 'segmented'}${error ? ' is-invalid' : ''}`}
+      >
+        {options.map((o) => (
+          <label key={o.value} className="choice">
+            <input type="radio" name={name} id={`${name}-${o.value}`} value={o.value} checked={value === o.value} onChange={onChange} />
+            <span className="choice-face">
+              <span>{o.label}</span>
+              {o.sub && <span className="choice-sub">{o.sub}</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+      {error && <span className="field-error" id={`${name}-error`}>{error}</span>}
     </div>
   )
 }
 
 // Form values are strings. On submit they are checked with the same rules as the server (calculateTargets).
 export default function ProfileForm({ initialForm, onSubmit, onCancel }) {
-  const [form, setForm] = useState(initialForm)
+  const [form, setForm] = useState(() => withDefaults(initialForm))
   const [errors, setErrors] = useState({})
 
-  const set = (name) => (event) => {
-    setForm((f) => ({ ...f, [name]: event.target.value }))
+  const setValue = (name, value) => {
+    setForm((f) => ({ ...f, [name]: value }))
     setErrors((e) => ({ ...e, [name]: undefined }))
   }
-  const aria = (name) => ({
-    'aria-invalid': errors[name] ? 'true' : 'false',
-    'aria-describedby': errors[name] ? `${name}-error` : undefined,
-  })
+  const set = (name) => (event) => setValue(name, event.target.value)
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -35,48 +84,64 @@ export default function ProfileForm({ initialForm, onSubmit, onCancel }) {
   }
 
   const hasErrors = Object.values(errors).some(Boolean)
+  const goalOptions = GOAL_OPTIONS.map((o) => ({ value: o.value, ...(GOAL_COPY[o.value] || { label: o.label }) }))
 
   return (
-    <form className="card" onSubmit={handleSubmit} noValidate>
-      <h2>Your details</h2>
-      <div className="form-grid">
-        <Field id="weightKg" label="Weight (kg)" error={errors.weightKg}>
-          <input id="weightKg" type="text" inputMode="decimal" autoComplete="off" value={form.weightKg} onChange={set('weightKg')} {...aria('weightKg')} />
-        </Field>
-        <Field id="heightCm" label="Height (cm)" error={errors.heightCm}>
-          <input id="heightCm" type="text" inputMode="decimal" autoComplete="off" value={form.heightCm} onChange={set('heightCm')} {...aria('heightCm')} />
-        </Field>
-        <Field id="age" label="Age" error={errors.age}>
-          <input id="age" type="text" inputMode="numeric" autoComplete="off" value={form.age} onChange={set('age')} {...aria('age')} />
-        </Field>
-        <Field id="sex" label="Sex" error={errors.sex}>
-          <select id="sex" value={form.sex} onChange={set('sex')} {...aria('sex')}>
-            <option value="">Choose…</option>
-            {SEX_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </Field>
-        <Field id="activity" label="Activity level" error={errors.activity} wide>
-          <select id="activity" value={form.activity} onChange={set('activity')} {...aria('activity')}>
-            <option value="">Choose…</option>
-            {ACTIVITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </Field>
-        <Field id="goal" label="Goal" error={errors.goal}>
-          <select id="goal" value={form.goal} onChange={set('goal')} {...aria('goal')}>
-            <option value="">Choose…</option>
-            {GOAL_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </Field>
-        <Field id="budget" label="Weekly budget (AUD)" hint="Lunch and dinner, Monday to Friday" error={errors.budget}>
-          <input id="budget" type="text" inputMode="decimal" autoComplete="off" value={form.budget} onChange={set('budget')} {...aria('budget')} />
-        </Field>
+    <form className="card form" onSubmit={handleSubmit} noValidate aria-labelledby="form-title">
+      <div className="card-head">
+        <h2 id="form-title">Your details</h2>
+        <p className="muted">Seven quick answers. We work out your calories from them.</p>
       </div>
-      {hasErrors && <p className="field-error" role="alert">Please fix the highlighted fields.</p>}
-      <p className="muted">Your details stay in this browser. Only the numbers above are sent to build the plan.</p>
-      <div className="button-row">
-        <button type="submit" className="button">Build my plan</button>
-        {onCancel && <button type="button" className="button button-secondary" onClick={onCancel}>Back to my plan</button>}
+
+      <div className="field-row-3">
+        <NumberField id="weightKg" label="Weight" unit="kg" value={form.weightKg} onChange={set('weightKg')} error={errors.weightKg} />
+        <NumberField id="heightCm" label="Height" unit="cm" value={form.heightCm} onChange={set('heightCm')} error={errors.heightCm} />
+        <NumberField id="age" label="Age" unit="yrs" inputMode="numeric" value={form.age} onChange={set('age')} error={errors.age} />
       </div>
+
+      <ChoiceGroup name="sex" label="Sex" hint="Only used in the calorie formula." options={SEX_OPTIONS} value={form.sex} onChange={set('sex')} error={errors.sex} />
+
+      <ChoiceGroup name="activity" label="How active are you?" variant="list" options={ACTIVITY_OPTIONS} value={form.activity} onChange={set('activity')} error={errors.activity} />
+
+      <ChoiceGroup name="goal" label="Goal" options={goalOptions} value={form.goal} onChange={set('goal')} error={errors.goal} />
+
+      <div className="field">
+        <label className="field-label" htmlFor="budget">Weekly budget</label>
+        <span className="field-hint" id="budget-hint">Lunch and dinner, Monday to Friday, in AUD.</span>
+        <div className="input-wrap">
+          <span className="input-prefix" aria-hidden="true">$</span>
+          <input
+            id="budget"
+            className="input input-has-prefix"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={form.budget}
+            onChange={set('budget')}
+            aria-invalid={errors.budget ? 'true' : 'false'}
+            aria-describedby={errors.budget ? 'budget-hint budget-error' : 'budget-hint'}
+          />
+        </div>
+        <div className="chip-row" role="group" aria-label="Quick budgets">
+          {BUDGET_PRESETS.map((b) => (
+            <button key={b} type="button" className="chip" aria-pressed={String(form.budget) === b} onClick={() => setValue('budget', b)}>
+              ${b}
+            </button>
+          ))}
+        </div>
+        {errors.budget && <span className="field-error" id="budget-error">{errors.budget}</span>}
+      </div>
+
+      {hasErrors && (
+        <p className="form-error" role="alert"><IconAlert /> Please fix the highlighted fields.</p>
+      )}
+
+      <div className="form-actions">
+        <button type="submit" className="button button-lg button-block">Build my plan</button>
+        {onCancel && <button type="button" className="button button-ghost button-block" onClick={onCancel}>Back to my plan</button>}
+      </div>
+
+      <p className="privacy"><IconLock /> Your details stay in this browser. Only the numbers above are sent to build the plan.</p>
     </form>
   )
 }
