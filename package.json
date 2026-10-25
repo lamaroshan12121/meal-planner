@@ -1,0 +1,14 @@
+{
+  "name": "meal-planner",
+  "version": "1.0.0",
+  "description": "Meal prep cost and macro planner",
+  "type": "module",
+  "scripts": {
+    "test": "node test-ingredients.js && node test-targets.js && node test-plan.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^2.31.0",
+    "dotenv": "^18.0.9"
+  }
+}
